@@ -1,0 +1,71 @@
+version: '3.8'
+
+services:
+  influxdb:
+    image: influxdb:2.7
+    container_name: influxdb-1
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=master_password_123
+      - DOCKER_INFLUXDB_INIT_ORG=${INFLUX_ORG}
+      - DOCKER_INFLUXDB_INIT_BUCKET=${INFLUX_BUCKET}
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${INFLUX_TOKEN}
+
+  notifier:
+    build: ./notifier
+    container_name: notifier-1
+    ports:
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock  # Дает право управлять докером
+    environment:
+      - TARGET_CONTAINER=leaky-app
+
+  agent:
+    build: ./agent
+    container_name: agent-1
+    restart: always
+    depends_on:
+      - influxdb
+    environment:
+      - INFLUX_URL=http://influxdb:8086
+      - INFLUX_TOKEN=${INFLUX_TOKEN}
+      - INFLUX_ORG=${INFLUX_ORG}
+      - INFLUX_BUCKET=${INFLUX_BUCKET}
+      - HOST_NAME=kama-server
+      - COLLECT_INTERVAL=5
+
+  brain:
+    build: ./brain
+    container_name: brain-1
+    restart: always
+    depends_on:
+      - influxdb
+      - notifier
+    environment:
+      - INFLUX_URL=http://influxdb:8086
+      - INFLUX_TOKEN=${INFLUX_TOKEN}
+      - INFLUX_ORG=${INFLUX_ORG}
+      - INFLUX_BUCKET=${INFLUX_BUCKET}
+      - NOTIFIER_URL=http://notifier:8080/alert
+      - TARGET_CONTAINER=leaky-app
+      - CHECK_INTERVAL=10
+      - WINDOW_MIN=2
+      - MIN_TRAIN_ROWS=5
+
+  leaky-app:
+    image: python:3.10-slim
+    container_name: leaky-app
+    restart: always
+    volumes:
+      - ./leaky-app:/app
+    working_dir: /app
+    command: python -c "import time; print('Target application running...'); [time.sleep(10) for _ in iter(int, 1)]"
+
+volumes:
+  influxdb-data:
